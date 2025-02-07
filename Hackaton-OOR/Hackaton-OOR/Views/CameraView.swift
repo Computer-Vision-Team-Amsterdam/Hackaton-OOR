@@ -1,106 +1,135 @@
 import SwiftUI
+import UIKit
 import AVFoundation
 
-/// A SwiftUI view that displays a live camera preview using the VideoCapture class.
-struct CameraView: View {
-    // Use an ObservableObject wrapper to manage the VideoCapture instance.
-    @StateObject private var cameraManager = CameraManager()
+// MARK: - SwiftUI Container with Exit Button
+
+struct CameraViewContainer: View {
+    @AppStorage("debugView") var debugView: Bool = false
     
     var body: some View {
-        ZStack {
-            // CameraPreview will wrap a UIView that shows the video preview.
-            CameraPreview(videoCapture: cameraManager.videoCapture)
-                .ignoresSafeArea()
+        ZStack(alignment: .topTrailing) {
+            CameraView()
+                .edgesIgnoringSafeArea(.all)
             
-            // (Optional) Add any overlay UI controls here
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    Button(action: {
-                        // Example action: stop the camera preview.
-                        cameraManager.stopCapture()
-                    }) {
-                        Image(systemName: "stop.circle.fill")
-                            .resizable()
-                            .frame(width: 60, height: 60)
-                            .foregroundColor(.red)
-                            .padding()
-                    }
-                }
+            Button(action: {
+                // When the exit button is tapped, set debugView to false.
+                debugView = false
+            }) {
+                // Customize your button appearance.
+                Image(systemName: "xmark.circle.fill")
+                    .resizable()
+                    .frame(width: 40, height: 40)
+                    .foregroundColor(.white)
+                    .padding()
             }
-        }
-        .onAppear {
-            cameraManager.startCapture()
-        }
-        .onDisappear {
-            cameraManager.stopCapture()
         }
     }
 }
 
-/// A UIViewRepresentable that hosts the camera’s preview layer.
-struct CameraPreview: UIViewRepresentable {
-    let videoCapture: VideoCapture
+// MARK: - UIViewControllerRepresentable for the Camera Preview
+
+struct CameraView: UIViewControllerRepresentable {
+    func makeUIViewController(context: Context) -> CameraPreviewViewController {
+        return CameraPreviewViewController()
+    }
     
-    func makeUIView(context: Context) -> UIView {
-        // Create a plain UIView that will contain the camera preview.
-        let view = UIView(frame: .zero)
+    func updateUIViewController(_ uiViewController: CameraPreviewViewController, context: Context) {
+        // No dynamic updates needed.
+    }
+}
+
+// MARK: - UIKit Camera Preview View Controller
+
+class CameraPreviewViewController: UIViewController {
+    // MARK: - Properties
+    var captureSession: AVCaptureSession!
+    var videoPreviewLayer: AVCaptureVideoPreviewLayer!
+    
+    // MARK: - Lifecycle Methods
+    override func viewDidLoad() {
+        super.viewDidLoad()
         view.backgroundColor = .black
         
-        // Set up the camera. The VideoCapture setUp method runs on a background queue.
-        videoCapture.setUp { success in
-            if success {
-                DispatchQueue.main.async {
-                    // Once setup is complete, ensure that the previewLayer is sized correctly.
-                    if let previewLayer = videoCapture.previewLayer {
-                        previewLayer.frame = view.bounds
-                        previewLayer.videoGravity = .resizeAspectFill
-                        // Add the preview layer to the view's layer hierarchy.
-                        view.layer.insertSublayer(previewLayer, at: 0)
-                    }
-                }
+        // 1. Set up the capture session.
+        captureSession = AVCaptureSession()
+        captureSession.sessionPreset = .high
+        
+        // 2. Get the default video device (typically the back camera).
+        guard let videoDevice = AVCaptureDevice.default(for: .video) else {
+            print("No video device found")
+            return
+        }
+        
+        do {
+            // 3. Create an input from the video device.
+            let videoInput = try AVCaptureDeviceInput(device: videoDevice)
+            // 4. Add the input to the capture session.
+            if captureSession.canAddInput(videoInput) {
+                captureSession.addInput(videoInput)
             } else {
-                print("Failed to set up camera.")
+                print("Could not add video input to the session")
+                return
             }
+        } catch {
+            print("Error setting up video input: \(error)")
+            return
         }
-        return view
-    }
-    
-    func updateUIView(_ uiView: UIView, context: Context) {
-        // Update the preview layer's frame if the view’s size changes.
-        if let previewLayer = videoCapture.previewLayer {
-            previewLayer.frame = uiView.bounds
-        }
-        // Also update the video orientation when the view updates.
-        videoCapture.updateVideoOrientation()
-    }
-}
-
-/// An ObservableObject wrapper that manages the VideoCapture instance.
-final class CameraManager: ObservableObject {
-    let videoCapture = VideoCapture()
-    
-    /// Starts the camera capture session.
-    func startCapture() {
-        // Ensure the camera is set up before starting.
-        videoCapture.setUp { success in
-            if success {
-                self.videoCapture.start()
-            } else {
-                print("CameraManager: Camera setup failed.")
-            }
+        
+        // 5. Set up the video preview layer.
+        videoPreviewLayer = AVCaptureVideoPreviewLayer(session: captureSession)
+        videoPreviewLayer.videoGravity = .resizeAspectFill
+        view.layer.addSublayer(videoPreviewLayer)
+        
+        // 6. Start the capture session on a background thread.
+        DispatchQueue.global(qos: .userInitiated).async {
+            self.captureSession.startRunning()
         }
     }
     
-    /// Stops the camera capture session.
-    func stopCapture() {
-        videoCapture.stop()
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Ensure the preview layer fills the view.
+        videoPreviewLayer.frame = view.bounds
+        updateVideoOrientation()
     }
-}
-
-struct CameraView_Previews: PreviewProvider {
-    static var previews: some View {
-        CameraView()
+    
+    // Update the preview layer’s frame and orientation when the device rotates.
+    override func viewWillTransition(to size: CGSize, with coordinator: UIViewControllerTransitionCoordinator) {
+        super.viewWillTransition(to: size, with: coordinator)
+        coordinator.animate(alongsideTransition: { _ in
+            self.videoPreviewLayer.frame = self.view.bounds
+            self.updateVideoOrientation()
+        }, completion: nil)
+    }
+    
+    // Updates the video orientation to match the interface orientation.
+    private func updateVideoOrientation() {
+        guard let connection = videoPreviewLayer.connection,
+              connection.isVideoOrientationSupported else {
+            return
+        }
+        
+        // Retrieve the current interface orientation.
+        let interfaceOrientation: UIInterfaceOrientation
+        if let windowScene = view.window?.windowScene {
+            interfaceOrientation = windowScene.interfaceOrientation
+        } else {
+            interfaceOrientation = .portrait
+        }
+        
+        // Map the interface orientation to the video orientation.
+        switch interfaceOrientation {
+        case .portrait:
+            connection.videoOrientation = .portrait
+        case .portraitUpsideDown:
+            connection.videoOrientation = .portraitUpsideDown
+        case .landscapeLeft:
+            connection.videoOrientation = .landscapeLeft
+        case .landscapeRight:
+            connection.videoOrientation = .landscapeRight
+        default:
+            connection.videoOrientation = .portrait
+        }
     }
 }

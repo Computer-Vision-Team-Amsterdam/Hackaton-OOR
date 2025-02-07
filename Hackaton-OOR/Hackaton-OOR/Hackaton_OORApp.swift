@@ -9,15 +9,21 @@ import SwiftUI
 
 @main
 struct Hackaton_OORApp: App {
+  @AppStorage("debugView") var debugView: Bool = false
     init() {
         UserDefaults.standard.register(defaults: ["detectContainers": true,
                                                   "iouThreshold": 0.45,
-                                                  "confidenceThreshold": 0.25])
+                                                  "confidenceThreshold": 0.25,
+                                                  "debugView": false])
     }
     
     var body: some Scene {
         WindowGroup {
+          if debugView {
+            CameraViewContainer()
+          } else {
             MainView()
+          }
         }
     }
 }
