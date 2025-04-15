@@ -58,8 +58,14 @@ func bestCaptureDevice(for position: AVCaptureDevice.Position) -> AVCaptureDevic
 public class VideoCapture: NSObject {
   public var previewLayer: AVCaptureVideoPreviewLayer?
   public weak var delegate: VideoCaptureDelegate?
-
+ 
+  #if targetEnvironment(simulator)
+  // No real capture device in the simulator.
+  lazy var captureDevice: AVCaptureDevice? = nil
+  #else
+  // On a real device, select the best available back camera.
   let captureDevice = bestCaptureDevice(for: .back)
+  #endif
   let captureSession = AVCaptureSession()
   let videoOutput = AVCaptureVideoDataOutput()
   var cameraOutput = AVCapturePhotoOutput()
@@ -69,21 +75,40 @@ public class VideoCapture: NSObject {
   public func setUp(
     sessionPreset: AVCaptureSession.Preset = .hd1280x720, completion: @escaping (Bool) -> Void
   ) {
+    #if targetEnvironment(simulator)
+    print("Simulator mode: Bypassing camera hardware setup.")
+    // Create a dummy preview layer using an empty session.
+    let dummySession = AVCaptureSession()
+    self.previewLayer = AVCaptureVideoPreviewLayer(session: dummySession)
+    self.previewLayer?.videoGravity = .resizeAspectFill
+    DispatchQueue.main.async {
+        completion(true)
+    }
+    return
+    #else
+    // On a real device, run the usual setup code on the background queue.
     queue.async {
       let success = self.setUpCamera(sessionPreset: sessionPreset)
       DispatchQueue.main.async {
         completion(success)
       }
     }
+    #endif
   }
 
   // Internal method to configure camera inputs, outputs, and session properties.
   private func setUpCamera(sessionPreset: AVCaptureSession.Preset) -> Bool {
+    #if targetEnvironment(simulator)
+    // In the simulator, bypass camera hardware configuration.
+    print("Simulator mode: Skipping camera hardware configuration.")
+    return true
+    #else
     captureSession.beginConfiguration()
     captureSession.sessionPreset = sessionPreset
 
-    guard let videoInput = try? AVCaptureDeviceInput(device: captureDevice) else {
-      return false
+    guard let device = captureDevice,
+          let videoInput = try? AVCaptureDeviceInput(device: device) else {
+        return false
     }
 
     if captureSession.canAddInput(videoInput) {
@@ -144,6 +169,7 @@ public class VideoCapture: NSObject {
 
     captureSession.commitConfiguration()
     return true
+    #endif
   }
 
   // Starts the video capture session.

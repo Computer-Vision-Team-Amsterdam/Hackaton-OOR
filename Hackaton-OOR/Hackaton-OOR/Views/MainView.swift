@@ -22,7 +22,9 @@ struct MainView: View {
     @StateObject private var networkMonitor = NetworkMonitor()
     @ObservedObject private var detectionManager = DetectionManager()
     @State private var storageAvailable: Int = 0
-    @State private var detectContainers: Bool = UserDefaults.standard.bool(forKey: "detectContainers")
+    @AppStorage("detectContainers") private var detectContainers: Bool = true
+    @AppStorage("detectMobileToilets") private var detectMobileToilets: Bool = true
+    @AppStorage("detectScaffoldings") private var detectScaffoldings: Bool = true
     
     // States for bottom section (static/recording info)
     @State private var recordedHours: String = "0:00"
@@ -36,6 +38,18 @@ struct MainView: View {
     @State private var showCameraView: Bool = false
     @State private var isCameraAuthorized: Bool = false
     @State private var showCameraAccessDeniedAlert: Bool = false
+
+    private var enabledObjects: String {
+        var objects = [String]()
+        if detectContainers { objects.append("containers") }
+        if detectMobileToilets { objects.append("mobile toilets") }
+        if detectScaffoldings { objects.append("scaffoldings") }
+        return objects.isEmpty ? "none" : objects.joined(separator: ", ")
+    }
+
+    private var areAnyObjectsEnabled: Bool {
+        detectContainers || detectMobileToilets || detectScaffoldings
+    }
     
     let storageTimer = Timer.publish(every: 120, on: .main, in: .common).autoconnect()
     let deliverToAzureTimer = Timer.publish(every: 120, on: .main, in: .common).autoconnect() // simulate progress every 1 sec
@@ -142,13 +156,13 @@ struct MainView: View {
             
             ZStack(alignment: .bottom){
                 VStack(alignment: .leading, spacing: 20) {
-                    HStack {
-                        Text("Detect containers")
-                        Spacer()
-                        Text(detectContainers ? "ON" : "OFF")
-                            .foregroundColor(detectContainers ? .green : .red)
+                    // Enabled Objects
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Detect Objects:")
+                        Text(enabledObjects)
+                            .foregroundColor(enabledObjects == "none" ? .red : .green)
                     }
-                    
+
                     Divider()
                     
                     // Recorded Hours
@@ -235,7 +249,7 @@ struct MainView: View {
                             Text("Detect")
                         }
                         .buttonStyle(DetectButtonStyle())
-                        .disabled(isDetecting || !locationManager.gpsAvailable)
+                        .disabled(isDetecting || !locationManager.gpsAvailable || !areAnyObjectsEnabled)
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -248,16 +262,17 @@ struct MainView: View {
             CameraManager.checkAndRequestCameraAccess { authorized in
                 isCameraAuthorized = authorized
             }
+            // TODO: To remove later
+            print("detectContainers = \(UserDefaults.standard.bool(forKey: "detectContainers"))")
+            print("detectMobileToilets = \(UserDefaults.standard.bool(forKey: "detectMobileToilets"))")
+            print("detectScaffoldings = \(UserDefaults.standard.bool(forKey: "detectScaffoldings"))")
         }
+        
         .onReceive(storageTimer) { _ in
             storageAvailable = getAvailableDiskSpace()
         }
         .onReceive(deliverToAzureTimer) { _ in
             detectionManager.deliverFilesFromDocuments()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
-            detectContainers = UserDefaults.standard.bool(forKey: "detectContainers")
-            print("detectContainers updated: \(detectContainers)")
         }
         .fullScreenCover(isPresented: $showCameraView) {
             CameraViewContainer(isCameraPresented: $showCameraView)

@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>LSBundleContainsCoreMLmlmodelc</key>
+	<true/>
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<true/>
+		<key>UISceneConfigurations</key>
+		<dict/>
+	</dict>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UILaunchScreen</key>
+		<dict/>
+	</dict>
+	<key>CFBundlePackageType</key>
+	<string>$(PRODUCT_BUNDLE_PACKAGE_TYPE)</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UISupportedInterfaceOrientations~ipad</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>UISupportedInterfaceOrientations~iphone</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>The app needs access to your camera to detect containers.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>The app needs access to your location to collect metadata for object detection.</string>
+	<key>UIRequiresFullScreen</key>
+	<true/>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>DEVICE_ID</key>
+	<string>$(DEVICE_ID)</string>
+	<key>DEVICE_SAS_TOKEN</key>
+	<string>$(DEVICE_SAS_TOKEN)</string>
+	<key>ContainerConfidenceThreshold</key>
+	<string>0.25</string>
+	<key>ContainerIoUThreshold</key>
+	<string>0.45</string>
+	<key>MobileToiletConfidenceThreshold</key>
+	<string>0.25</string>
+	<key>MobileToiletIoUThreshold</key>
+	<string>0.45</string>
+	<key>ScaffoldingConfidenceThreshold</key>
+	<string>0.25</string>
+	<key>ScaffoldingIoUThreshold</key>
+	<string>0.45</string>
+	<key>IoTHubHost</key>
+	<string>iothub-oor-ont-weu-itr-01.azure-devices.net</string>
+</dict>
+</plist>

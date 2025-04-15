@@ -10,9 +10,12 @@ import SwiftUI
 @main
 struct Hackaton_OORApp: App {
     init() {
-        UserDefaults.standard.register(defaults: ["detectContainers": true,
-                                                  "iouThreshold": 0.45,
-                                                  "confidenceThreshold": 0.25])
+        UserDefaults.standard.register(defaults: [
+            "detectContainers": true,
+            "detectMobileToilets": true,
+            "detectScaffoldings": true,
+        ])
+        IoTDeviceManager.shared.setupDeviceCredentials()
     }
     
     var body: some Scene {

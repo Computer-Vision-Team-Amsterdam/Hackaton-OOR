@@ -29,9 +29,22 @@
 		4FF468FB2D4CDFAF001733D8 /* Hackaton-OORUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "Hackaton-OORUITests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		4FEE99102DA543F2003907FF /* Exceptions for "Hackaton-OOR" folder in "Hackaton-OOR" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 4FF468E02D4CDFAC001733D8 /* Hackaton-OOR */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4FF468E32D4CDFAC001733D8 /* Hackaton-OOR */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4FEE99102DA543F2003907FF /* Exceptions for "Hackaton-OOR" folder in "Hackaton-OOR" target */,
+			);
 			path = "Hackaton-OOR";
 			sourceTree = "<group>";
 		};
@@ -390,6 +403,8 @@
 		};
 		4FF469062D4CDFAF001733D8 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 4FF468E32D4CDFAC001733D8 /* Hackaton-OOR */;
+			baseConfigurationReferenceRelativePath = Secrets.xcconfig;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -398,7 +413,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Hackaton-OOR/Preview Content\"";
 				DEVELOPMENT_TEAM = W6SA8G6GG8;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "$(SRCROOT)/Hackaton-OOR/Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "The app needs access to your camera to detect containers.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "The app needs access to your location to collect metadata for object detection.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
@@ -421,6 +437,8 @@
 		};
 		4FF469072D4CDFAF001733D8 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReferenceAnchor = 4FF468E32D4CDFAC001733D8 /* Hackaton-OOR */;
+			baseConfigurationReferenceRelativePath = Secrets.xcconfig;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
@@ -429,7 +447,8 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Hackaton-OOR/Preview Content\"";
 				DEVELOPMENT_TEAM = W6SA8G6GG8;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "$(SRCROOT)/Hackaton-OOR/Info.plist";
 				INFOPLIST_KEY_NSCameraUsageDescription = "The app needs access to your camera to detect containers.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "The app needs access to your location to collect metadata for object detection.";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;

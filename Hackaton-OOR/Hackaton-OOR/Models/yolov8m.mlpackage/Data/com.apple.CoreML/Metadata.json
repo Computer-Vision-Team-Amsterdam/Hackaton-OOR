@@ -1,0 +1,17 @@
+{
+  "MLModelVersionStringKey" : "8.3.55",
+  "MLModelDescriptionKey" : "Ultralytics YOLOv8m_1280_v2.2_curious_hill_12 model trained on \/mnt\/azureml\/cr\/j\/a0f25412e9524bf886ea559fc7fe3080\/cap\/data-capability\/wd\/yolo_yaml_path\/oor_dataset_cfg_nc_5.yaml",
+  "MLModelCreatorDefinedKey" : {
+    "stride" : "32",
+    "Confidence threshold" : "0.25",
+    "IoU threshold" : "0.45",
+    "docs" : "https:\/\/docs.ultralytics.com",
+    "task" : "detect",
+    "imgsz" : "[640, 384]",
+    "date" : "2025-02-03T10:38:39.626959",
+    "batch" : "1",
+    "names" : "{0: 'person', 1: 'license plate', 2: 'container', 3: 'mobile toilet', 4: 'scaffolding'}"
+  },
+  "MLModelAuthorKey" : "Ultralytics",
+  "MLModelLicenseKey" : "AGPL-3.0 License (https:\/\/ultralytics.com\/license)"
+}

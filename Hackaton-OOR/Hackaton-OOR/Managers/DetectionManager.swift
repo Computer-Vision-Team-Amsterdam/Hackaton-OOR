@@ -11,56 +11,73 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
     
     // MARK: - Private properties
     
+    /// Handles video capture from the device's camera.
     private var videoCapture: VideoCapture?
+    
+    /// The Vision request for performing object detection using the CoreML model.
     private var visionRequest: VNCoreMLRequest?
+    
+    /// The CoreML model used for object detection.
     private var mlModel: MLModel?
+    
+    /// The Vision model wrapper for the CoreML model.
     private var detector: VNCoreMLModel?
+    
+    /// Stores the last captured pixel buffer for saving or processing.
     private var lastPixelBufferForSaving: CVPixelBuffer?
+    
+    /// Timestamp of the last captured pixel buffer.
     private var lastPixelBufferTimestamp: TimeInterval?
+    
+    /// The current pixel buffer being processed.
     private var currentBuffer: CVPixelBuffer?
+    
+    /// Handles data uploads to Azure IoT Hub.
     private var uploader: AzureIoTDataUploader?
     
-    // Keep track of the last known user default values
-    private var lastConfidenceThreshold: Double = 0.25
-    private var lastIoUThreshold: Double = 0.45
+    /// The Azure IoT Hub host URL.
+    private let iotHubHost: String
     
-    // Track whether the video capture has finished configuration.
+    /// Indicates whether the video capture has been successfully configured.
     private(set) var isConfigured: Bool = false
     
-    // Create an instance of the data uploader.
-    private let iotHubHost = "iothub-oor-ont-weu-itr-01.azure-devices.net"
-//    private let deviceId = "test-Sebastian"
-//    private let deviceSasToken = ""
+    // MARK: - Published properties
     
-    private let deviceId = "test_niek"
-    private let deviceSasToken = ""
-    
+    /// The number of objects detected.
     @Published var objectsDetected = 0
+    
+    /// The total number of images processed.
     @Published var totalImages = 0
+    
+    /// The total number of images successfully delivered to Azure.
     @Published var imagesDelivered = 0
     
-    private var detectionTimer: Timer?
+    /// The total number of minutes the detection has been running.
     @Published var minutesRunning = 0
+    
+    private var detectionTimer: Timer?
     
     // MARK: - Initialization
     
+    /// Initializes the DetectionManager, loading the YOLO model and setting up video capture.
     override init() {
+        // Use centralized configuration from AppConfiguration.
+        let config = AppConfiguration.shared
+        self.iotHubHost = config.iothubHost
+        
         super.init()
-        self.uploader = AzureIoTDataUploader(host: self.iotHubHost, deviceId: self.deviceId, sasToken: self.deviceSasToken)
+        self.uploader = AzureIoTDataUploader(host: self.iotHubHost)
         
         // 1. Load the YOLO model.
         let modelConfig = MLModelConfiguration()
-        // (Optional) Enable new experimental options for iOS 17+
-        if #available(iOS 17.0, *) {
-            modelConfig.setValue(1, forKey: "experimentalMLE5EngineUsage")
-        }
+        modelConfig.computeUnits = .all
         
         do {
             // Replace `yolov8m` with the actual name of your generated model class.
             let loadedModel = try yolov8m(configuration: modelConfig).model
             self.mlModel = loadedModel
             let vnModel = try VNCoreMLModel(for: loadedModel)
-            vnModel.featureProvider = ThresholdManager.shared.getThresholdProvider()
+            vnModel.featureProvider = config.staticThresholdProvider
             self.detector = vnModel
         } catch {
             print("Error loading model: \(error)")
@@ -91,7 +108,8 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
     
     // MARK: - Public Methods
     
-    // Start detection only if configured.
+    /// Starts the object detection process.
+    /// Ensures the video capture is configured before starting.
     func startDetection() {
         guard isConfigured else {
             print("Video capture not configured yet. Delaying startDetection()...")
@@ -101,7 +119,6 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             }
             return
         }
-        updateThresholdsIfNeeded()
         videoCapture?.start()
         print("Detection started.")
         detectionTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -112,30 +129,20 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         }
     }
     
-    /// Stops the video capture (and detection).
+    /// Stops the object detection process and invalidates the detection timer.
     func stopDetection() {
         videoCapture?.stop()
         print("Detection stopped.")
         detectionTimer?.invalidate()
         detectionTimer = nil
     }
-  
-    /// Updates Thresholds if adjusted.
-    private func updateThresholdsIfNeeded() {
-        let tempProvider = ThresholdManager.shared.getThresholdProvider()
-        let finalConf = tempProvider.confidenceThreshold
-        let finalIoU = tempProvider.iouThreshold
-        
-        if finalConf != lastConfidenceThreshold || finalIoU != lastIoUThreshold {
-            print("Updating thresholds: Confidence=\(finalConf), IoU=\(finalIoU)")
-            detector?.featureProvider = tempProvider
-            lastConfidenceThreshold = finalConf
-            lastIoUThreshold = finalIoU
-        }
-    }
     
     // MARK: - VideoCaptureDelegate
     
+    /// Processes each captured video frame for object detection.
+    /// - Parameters:
+    ///   - capture: The video capture instance.
+    ///   - sampleBuffer: The captured video frame.
     func videoCapture(_ capture: VideoCapture, didCaptureVideoFrame sampleBuffer: CMSampleBuffer) {
         // Only process if no other frame is currently being processed.
         if currentBuffer == nil, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer),
@@ -161,24 +168,36 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
     
     // MARK: - Process Detection Results
     
+    /// Processes the results of the Vision request.
+    /// - Parameters:
+    ///   - request: The Vision request containing detection results.
+    ///   - error: An optional error if the request failed.
     func processObservations(for request: VNRequest, error: Error?) {
         DispatchQueue.main.async(execute: {
             if let results = request.results as? [VNRecognizedObjectObservation] {
-                // --- Step 1: Check if at least one "container" is detected.
-                let containerDetected = results.contains { observation in
-                    if let label = observation.labels.first?.identifier.lowercased() {
-                        return label == "container"
+
+                let targetClasses: [(name: String, enabled: Bool)] = [
+                    ("container", UserDefaults.standard.bool(forKey: "detectContainers")),
+                    ("mobile toilet", UserDefaults.standard.bool(forKey: "detectMobileToilets")),
+                    ("scaffolding", UserDefaults.standard.bool(forKey: "detectScaffoldings"))
+                ]
+
+                // Check if at least one enabled target is detected in the observations.
+                let shouldProcess = targetClasses.contains { (objectName, isEnabled) in
+                    return isEnabled && results.contains { observation in
+                        if let label = observation.labels.first?.identifier.lowercased() {
+                            return label == objectName
+                        }
+                        return false
                     }
-                    return false
                 }
-                
-                // Only proceed if a container is detected.
-                if containerDetected {
+                if shouldProcess {
                     // --- Step 2: Identify sensitive objects and collect their bounding boxes.
                     // Define your sensitive classes.
                     let sensitiveClasses: Set<String> = ["person", "license plate"]
                     var sensitiveBoxes = [CGRect]()
-                    var containerBoxes = [CGRect]()
+                    var detectedBoxes: [String: [CGRect]] = [:]
+                    var detectionCounts: [String: Int] = [:]
                     
                     // For each observation that is sensitive, convert its normalized bounding box to image coordinates.
                     // (Assume 'image' is created from your saved pixel buffer.)
@@ -187,28 +206,38 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
                         
                         let imageSize = image.size
                         for observation in results {
-                            if let label = observation.labels.first?.identifier.lowercased(){
-                                print(label)
+                            if let label = observation.labels.first?.identifier.lowercased() {
                                 let normRect = observation.boundingBox
-                                print(normRect)
                                 let rectInImage = VNImageRectForNormalizedRect(normRect, Int(imageSize.width), Int(imageSize.height))
-                                print(rectInImage)
-                                if label == "container" {
-                                    DispatchQueue.main.async {
-                                        self.objectsDetected += 1
-                                    }
-                                    containerBoxes.append(rectInImage)
+
+                                if targetClasses.contains(where: { $0.enabled && $0.name == label }) {
+                                    detectedBoxes[label, default: []].append(rectInImage)
+                                    detectionCounts[label, default: 0] += 1
                                 } else if sensitiveClasses.contains(label) {
                                     sensitiveBoxes.append(rectInImage)
                                 }
                             }
+                        }
+
+                        let totalDetected = detectionCounts.values.reduce(0, +)
+                        DispatchQueue.main.async {
+                            self.objectsDetected += totalDetected
                         }
                         
                         if !sensitiveBoxes.isEmpty,
                            let imageWithBlackBoxes = self.coverSensitiveAreasWithBlackBox(in: image, boxes: sensitiveBoxes) {
                             image = imageWithBlackBoxes
                         }
-                        image = self.drawSquaresAroundContainerAreas(in: image, boxes: containerBoxes)
+
+                        // If drawing bounding boxes is enabled, draw them on the image.
+                        if UserDefaults.standard.bool(forKey: "drawBoundingBoxes") {
+                            let colors: [String: UIColor] = [
+                                "container": .red,
+                                "mobile toilet": .blue,
+                                "scaffolding": .green
+                            ]
+                            image = self.drawSquaresAroundDetectedAreas(in: image, boxesPerObject: detectedBoxes, colors: colors)
+                        }
                         self.deliverDetectionToAzure(image: image, predictions: results)
                         self.lastPixelBufferForSaving = nil
                     }
@@ -217,6 +246,9 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         })
     }
     
+    /// Converts a pixel buffer to a UIImage.
+    /// - Parameter pixelBuffer: The pixel buffer to convert.
+    /// - Returns: A UIImage representation of the pixel buffer, or `nil` if conversion fails.
     func imageFromPixelBuffer(pixelBuffer: CVPixelBuffer) -> UIImage? {
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
         let context = CIContext()
@@ -230,6 +262,9 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         case documentsFolderNotFound(String)
     }
     
+    /// Retrieves the "Detections" folder in the app's Documents directory.
+    /// - Throws: An error if the folder cannot be located or created.
+    /// - Returns: The URL of the "Detections" folder.
     func getDetectionsFolder() throws -> URL {
         // Locate the "Detections" folder in the app’s Documents directory.
         guard let documentsURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
@@ -251,6 +286,10 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         return detectionsFolderURL
     }
     
+    /// Delivers the detection results to Azure IoT Hub.
+    /// - Parameters:
+    ///   - image: The image containing the detection results.
+    ///   - predictions: The list of detected objects.
     func deliverDetectionToAzure(image: UIImage, predictions: [VNRecognizedObjectObservation]){
         print("deliverDetectionToAzure")
         DispatchQueue.main.async {
@@ -353,6 +392,7 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         }
     }
     
+    /// Uploads any remaining files in the "Detections" folder to Azure IoT Hub.
     func deliverFilesFromDocuments() {
         do {
             let detectionsFolderURL = try self.getDetectionsFolder()
@@ -393,6 +433,11 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         }
     }
     
+    /// Covers sensitive areas in an image with black boxes.
+    /// - Parameters:
+    ///   - image: The image to process.
+    ///   - boxes: The bounding boxes of sensitive areas.
+    /// - Returns: A new image with sensitive areas covered, or `nil` if processing fails.
     func coverSensitiveAreasWithBlackBox(in image: UIImage, boxes: [CGRect]) -> UIImage? {
         // Convert the UIImage to a CIImage.
         guard let ciImage = CIImage(image: image) else { return nil }
@@ -427,10 +472,17 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         return nil
     }
 
-    func drawSquaresAroundContainerAreas(
+    /// Draws rectangles around container areas in an image.
+    /// - Parameters:
+    ///   - image: The image to process.
+    ///   - boxes: The bounding boxes of container areas.
+    ///   - color: The color of the rectangles (default is red).
+    ///   - lineWidth: The width of the rectangle lines (default is 3.0).
+    /// - Returns: A new image with rectangles drawn around container areas.
+    func drawSquaresAroundDetectedAreas(
         in image: UIImage,
-        boxes: [CGRect],
-        color: UIColor = .red,
+        boxesPerObject: [String: [CGRect]],
+        colors: [String: UIColor],
         lineWidth: CGFloat = 3.0
     ) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: image.size)
@@ -438,23 +490,32 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             // Draw the image (assumed to be drawn in the top-left origin space)
             image.draw(at: .zero)
             
-            context.cgContext.setStrokeColor(color.cgColor)
-            context.cgContext.setLineWidth(lineWidth)
-            
-            for box in boxes {
-                // Convert the box from Vision's coordinate system (bottom-left origin)
-                // to UIKit’s coordinate system (top-left origin)
-                let adjustedBox = CGRect(
-                    x: box.origin.x,
-                    y: image.size.height - box.origin.y - box.size.height,
-                    width: box.size.width,
-                    height: box.size.height
-                )
-                context.cgContext.stroke(adjustedBox)
+            for (label, boxes) in boxesPerObject {
+                let color = colors[label] ?? .yellow // Default if label not found.
+                context.cgContext.setStrokeColor(color.cgColor)
+                context.cgContext.setLineWidth(3.0)
+                
+                for box in boxes {
+                    // Adjust for coordinate system conversion.
+                    let adjustedBox = CGRect(
+                        x: box.origin.x,
+                        y: image.size.height - box.origin.y - box.size.height,
+                        width: box.size.width,
+                        height: box.size.height
+                    )
+                    context.cgContext.stroke(adjustedBox)
+                    // Optionally add text labels here.
+                }
             }
         }
     }
     
+    /// Blurs sensitive areas in an image.
+    /// - Parameters:
+    ///   - image: The image to process.
+    ///   - boxes: The bounding boxes of sensitive areas.
+    ///   - blurRadius: The radius of the blur effect (default is 20).
+    /// - Returns: A new image with sensitive areas blurred, or `nil` if processing fails.
     func blurSensitiveAreas(in image: UIImage, boxes: [CGRect], blurRadius: Double = 20) -> UIImage? {
         // Convert the UIImage to a CIImage.
         guard let ciImage = CIImage(image: image) else { return nil }
