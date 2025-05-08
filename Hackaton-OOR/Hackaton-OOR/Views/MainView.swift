@@ -38,6 +38,8 @@ struct StatusRows: View {
     @ObservedObject var networkMonitor: NetworkMonitor
     let storageAvailable: Int
     let detectContainers: Bool
+    let detectMobileToilets: Bool
+    let detectScaffoldings: Bool
 
     var body: some View {
         Group {
@@ -45,26 +47,39 @@ struct StatusRows: View {
                     value: locationManager.isReceivingLocationUpdates ? "ON" : "OFF",
                     valueColor: locationManager.isReceivingLocationUpdates ? .green : .red)
             Divider()
-
+            
             infoRow(label: "GPS accuracy (m)",
                     value: locationManager.lastAccuracy.map { String(format: "%.2f", $0) } ?? "N/A",
                     valueColor: locationManager.lastAccuracy != nil ? .green : .red)
             Divider()
-
+            
             infoRow(label: "Internet connection",
                     value: networkMonitor.internetAvailable ? "ON" : "OFF",
                     valueColor: networkMonitor.internetAvailable ? .green : .red)
             Divider()
-
+            
             infoRow(label: "Storage available",
                     value: "\(storageAvailable) GB",
                     valueColor: .green)
             Divider()
-
-            infoRow(label: "Detect containers",
-                    value: detectContainers ? "ON" : "OFF",
-                    valueColor: detectContainers ? .green : .red)
+            
+            HStack {
+                Text("Detect:")
+                Spacer()
+                Group {
+                    detectLabel(text: "containers", enabled: detectContainers)
+                    Text(",")
+                    detectLabel(text: "mobile toilets", enabled: detectMobileToilets)
+                    Text(",")
+                    detectLabel(text: "scaffoldings", enabled: detectScaffoldings)
+                  }
+            }
         }
+    }
+    /// Renders one of the object labels in green/red.
+    private func detectLabel(text: String, enabled: Bool) -> some View {
+        Text(text)
+            .foregroundColor(enabled ? .green : .red)
     }
 }
 
@@ -104,13 +119,16 @@ struct DetectionStatsRows: View {
 }
 
 struct MainView: View {
+    @AppStorage("detectContainers") private var detectContainers: Bool = true
+    @AppStorage("detectMobileToilets") private var detectMobileToilets: Bool = true
+    @AppStorage("detectScaffoldings") private var detectScaffoldings: Bool = true
+    
     @EnvironmentObject var iotManager: IoTDeviceManager
     @StateObject private var locationManager = LocationManager()
     @StateObject private var networkMonitor = NetworkMonitor()
     @ObservedObject private var detectionManager = DetectionManager.shared
     
     @State private var storageAvailable: Int = 0
-    @State private var detectContainers: Bool = UserDefaults.standard.bool(forKey: "detectContainers")
     
     // States for bottom section (static/recording info)
     @State private var recordedHours: String = "0:00"
@@ -126,6 +144,19 @@ struct MainView: View {
     private var isLocationAuthorized: Bool {
         // Accesses the authorizationStatus published by the locationManager instance
         locationManager.authorizationStatus == .authorizedWhenInUse || locationManager.authorizationStatus == .authorizedAlways
+    }
+    
+    private var enabledObjects: String {
+        let objects = [
+            detectContainers ? "containers" : nil,
+            detectMobileToilets ? "mobile toilets" : nil,
+            detectScaffoldings ? "scaffoldings" : nil
+        ].compactMap { $0 }
+        return objects.isEmpty ? "none" : objects.joined(separator: ", ")
+    }
+
+    private var areAnyObjectsEnabled: Bool {
+        detectContainers || detectMobileToilets || detectScaffoldings
     }
     
     // Timer to check storage periodically
@@ -169,9 +200,6 @@ struct MainView: View {
                 detectionManager.deliverFilesFromDocuments()
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)) { _ in
-            detectContainers = UserDefaults.standard.bool(forKey: "detectContainers")
-        }
         .alert("Credential Error", isPresented: $iotManager.showingCredentialAlert) {
             Button("OK", role: .cancel) { }
         } message: {
@@ -194,7 +222,9 @@ struct MainView: View {
             StatusRows(locationManager: locationManager,
                        networkMonitor: networkMonitor,
                        storageAvailable: storageAvailable,
-                       detectContainers: detectContainers)
+                       detectContainers: detectContainers,
+                       detectMobileToilets: detectMobileToilets,
+                       detectScaffoldings: detectScaffoldings)
             Spacer()
             DetectionStatsRows(detectionManager: detectionManager,
                                 formattedTime: formattedTime)
@@ -214,7 +244,9 @@ struct MainView: View {
                 StatusRows(locationManager: locationManager,
                            networkMonitor: networkMonitor,
                            storageAvailable: storageAvailable,
-                           detectContainers: detectContainers)
+                           detectContainers: detectContainers,
+                           detectMobileToilets: detectMobileToilets,
+                           detectScaffoldings: detectScaffoldings)
                 stopButton
             }
             .padding()
@@ -295,7 +327,7 @@ struct MainView: View {
             }
         }
         .buttonStyle(DetectButtonStyle())
-        .disabled(isDetecting || !locationManager.isReceivingLocationUpdates)
+        .disabled(isDetecting || !locationManager.isReceivingLocationUpdates || !areAnyObjectsEnabled)
     }
     
     /// Variable to align stop and start detection buttons next to eachother in portrait mode.

@@ -41,14 +41,11 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
     /// The current pixel buffer being processed.
     private var currentBuffer: CVPixelBuffer?
     
-    /// The last known confidence threshold for object detection.
-    private var lastConfidenceThreshold: Double
-    
-    /// The last known IoU threshold for object detection.
-    private var lastIoUThreshold: Double
-    
     /// The Azure IoT Hub host URL.
     private let iotHubHost: String
+    
+    /// The confidence threshold for all model classes
+    private let confidenceThreshold: Double
     
     /// The compression rate for captured frames
     private var frameCompressionQuality: Double
@@ -79,11 +76,11 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
     
     /// Initializes the DetectionManager, loading the YOLO model and setting up video capture.
     override init() {
+        // Use centralized configuration from AppConfiguration.
         // Fetch values from Info.plist
         let infoDict = Bundle.main.infoDictionary
-        self.lastConfidenceThreshold = Double(infoDict?["ConfidenceThreshold"] as? String ?? "0.25") ?? 0.25
-        self.lastIoUThreshold = Double(infoDict?["IoUThreshold"] as? String ?? "0.45") ?? 0.45
         self.iotHubHost = infoDict?["IoTHubHost"] as? String ?? "iothub-oor-ont-weu-itr-01.azure-devices.net"
+        self.confidenceThreshold = Double(infoDict?["ConfidenceThreshold"] as? String ?? "0.45") ?? 0.45
         self.frameCompressionQuality = Double(infoDict?["FrameCompressionQuality"] as? String ?? "0.5") ?? 0.5
         self.containerBoxLineWidth = CGFloat((infoDict?["ContainerBoxLineWidth"] as? String).flatMap(Double.init) ?? 3)
         
@@ -105,7 +102,11 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             let loadedModel = try yolov8m(configuration: modelConfig).model
             self.mlModel = loadedModel
             let vnModel = try VNCoreMLModel(for: loadedModel)
-            vnModel.featureProvider = ThresholdManager.shared.getThresholdProvider()
+            let thresholdProvider = try MLDictionaryFeatureProvider(dictionary: [
+            "confidenceThreshold": MLFeatureValue(double: self.confidenceThreshold)
+            ])
+            print("Confidence threshold provider: \(thresholdProvider)")
+            vnModel.featureProvider = thresholdProvider
             self.detector = vnModel
             
             guard let model = self.mlModel else {
@@ -202,7 +203,6 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             }
             return
         }
-        updateThresholdsIfNeeded()
         videoCapture?.start()
         managerLogger.info("Detection started.")
         detectionTimer?.invalidate()
@@ -220,22 +220,6 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         managerLogger.info("Detection stopped.")
         detectionTimer?.invalidate()
         detectionTimer = nil
-    }
-    
-    // MARK: - Private Methods
-    
-    /// Updates the detection thresholds if they have been adjusted.
-    private func updateThresholdsIfNeeded() {
-        let tempProvider = ThresholdManager.shared.getThresholdProvider()
-        let finalConf = tempProvider.confidenceThreshold
-        let finalIoU = tempProvider.iouThreshold
-        
-        if finalConf != lastConfidenceThreshold || finalIoU != lastIoUThreshold {
-            managerLogger.info("Updating thresholds: Confidence=\(finalConf), IoU=\(finalIoU)")
-            detector?.featureProvider = tempProvider
-            lastConfidenceThreshold = finalConf
-            lastIoUThreshold = finalIoU
-        }
     }
     
     // MARK: - VideoCaptureDelegate
@@ -285,22 +269,32 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         
         DispatchQueue.main.async(execute: {
             if let results = request.results as? [VNRecognizedObjectObservation] {
-                // --- Step 1: Check if at least one "container" is detected.
-                let containerDetected = results.contains { observation in
-                    observation.labels.first?.identifier.lowercased() == "container"
+
+                let targetClasses: [(name: String, enabled: Bool)] = [
+                    ("container", UserDefaults.standard.bool(forKey: "detectContainers")),
+                    ("mobile toilet", UserDefaults.standard.bool(forKey: "detectMobileToilets")),
+                    ("scaffolding", UserDefaults.standard.bool(forKey: "detectScaffoldings"))
+                ]
+
+                // --- Step 1: Check if at least one enabled target is detected in the observations.
+                let shouldProcess = targetClasses.contains { (objectName, isEnabled) in
+                    return isEnabled && results.contains { observation in
+                        if let label = observation.labels.first?.identifier.lowercased() {
+                            return label == objectName
+                        }
+                        return false
+                    }
                 }
-                
-                // Only proceed if a container is detected.
-                if containerDetected {
-                    self.managerLogger.info("Container detected, processing frame...")
-                    self.processDetectedFrame(results: results)
+                if shouldProcess {
+                    self.managerLogger.info("Object detected, processing frame...")
+                    self.processDetectedFrame(results: results, targetClasses: targetClasses)
                 }
             }
         })
     }
     
     /// Handles processing after a container has been detected in a frame.
-    private func processDetectedFrame(results: [VNRecognizedObjectObservation]) {
+    private func processDetectedFrame(results: [VNRecognizedObjectObservation], targetClasses: [(name: String, enabled: Bool)]) {
         guard let pixelBuffer = self.lastPixelBufferForSaving else {
             managerLogger.critical("Error: Missing last pixel buffer for processing.")
             return
@@ -312,32 +306,56 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             self.lastPixelBufferForSaving = nil // Clear buffer if conversion failed
             return
         }
-        
-        let imageSize = image.size
+
+        // --- Step 2: Identify sensitive objects and collect their bounding boxes.
+        // Define your sensitive classes.
+        let sensitiveClasses: Set<String> = ["person", "license plate"]
         var sensitiveBoxes = [CGRect]()
-        var containerBoxes = [CGRect]()
+        var detectedBoxes: [String: [CGRect]] = [:]
+        var detectionCounts: [String: Int] = [:]
         
-        for observation in results {
-            if let label = observation.labels.first?.identifier.lowercased() {
-                let normRect = observation.boundingBox
-                let rectInImage = VNImageRectForNormalizedRect(normRect, Int(imageSize.width), Int(imageSize.height))
-                
-                if label == "container" {
-                    self.objectsDetected += 1 // Increment on main thread
-                    containerBoxes.append(rectInImage)
-                } else if ["person", "license plate"].contains(label) { // Example sensitive classes
-                    sensitiveBoxes.append(rectInImage)
+        // For each observation that is sensitive, convert its normalized bounding box to image coordinates.
+        // (Assume 'image' is created from your saved pixel buffer.)
+        if let pixelBuffer = self.lastPixelBufferForSaving,
+            var image = self.imageFromPixelBuffer(pixelBuffer: pixelBuffer) {
+            
+            let imageSize = image.size
+            for observation in results {
+                if let label = observation.labels.first?.identifier.lowercased() {
+                    let normRect = observation.boundingBox
+                    let rectInImage = VNImageRectForNormalizedRect(normRect, Int(imageSize.width), Int(imageSize.height))
+
+                    if targetClasses.contains(where: { $0.enabled && $0.name == label }) {
+                        detectedBoxes[label, default: []].append(rectInImage)
+                        detectionCounts[label, default: 0] += 1
+                    } else if sensitiveClasses.contains(label) {
+                        sensitiveBoxes.append(rectInImage)
+                    }
                 }
             }
+
+            let totalDetected = detectionCounts.values.reduce(0, +)
+            DispatchQueue.main.async {
+                self.objectsDetected += totalDetected
+            }
+            
+            if !sensitiveBoxes.isEmpty,
+                let imageWithBlackBoxes = self.coverSensitiveAreasWithBlackBox(in: image, boxes: sensitiveBoxes) {
+                image = imageWithBlackBoxes
+            }
+
+            // If drawing bounding boxes is enabled, draw them on the image.
+            if UserDefaults.standard.bool(forKey: "drawBoundingBoxes") {
+                let colors: [String: UIColor] = [
+                    "container": .red,
+                    "mobile toilet": .blue,
+                    "scaffolding": .green
+                ]
+                image = self.drawSquaresAroundDetectedAreas(in: image, boxesPerObject: detectedBoxes, colors: colors)
+            }
+            self.deliverDetectionToAzure(image: image, predictions: results)
+            self.lastPixelBufferForSaving = nil
         }
-        
-        if !sensitiveBoxes.isEmpty,
-           let imageWithBlackBoxes = self.coverSensitiveAreasWithBlackBox(in: image, boxes: sensitiveBoxes) {
-            image = imageWithBlackBoxes
-        }
-        image = self.drawSquaresAroundContainerAreas(in: image, boxes: containerBoxes)
-        self.deliverDetectionToAzure(image: image, predictions: results)
-        self.lastPixelBufferForSaving = nil
     }
     
     /// Converts a pixel buffer to a UIImage.
@@ -577,10 +595,10 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
     ///   - color: The color of the rectangles (default is red).
     ///   - lineWidth: The width of the rectangle lines (default is 3.0).
     /// - Returns: A new image with rectangles drawn around container areas.
-    func drawSquaresAroundContainerAreas(
+    func drawSquaresAroundDetectedAreas(
         in image: UIImage,
-        boxes: [CGRect],
-        color: UIColor = .red,
+        boxesPerObject: [String: [CGRect]],
+        colors: [String: UIColor],
         lineWidth: CGFloat? = nil
     ) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: image.size)
@@ -588,19 +606,21 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         return renderer.image { context in
             image.draw(at: .zero)
             
-            context.cgContext.setStrokeColor(color.cgColor)
-            context.cgContext.setLineWidth(stroke)
-            
-            for box in boxes {
-                // Convert the box from Vision's coordinate system (bottom-left origin)
-                // to UIKit’s coordinate system (top-left origin)
-                let adjustedBox = CGRect(
-                    x: box.origin.x,
-                    y: image.size.height - box.origin.y - box.size.height,
-                    width: box.size.width,
-                    height: box.size.height
-                )
-                context.cgContext.stroke(adjustedBox)
+            for (label, boxes) in boxesPerObject {
+                let color = colors[label] ?? .yellow // Default if label not found.
+                context.cgContext.setStrokeColor(color.cgColor)
+                context.cgContext.setLineWidth(3.0)
+                
+                for box in boxes {
+                    // Adjust for coordinate system conversion.
+                    let adjustedBox = CGRect(
+                        x: box.origin.x,
+                        y: image.size.height - box.origin.y - box.size.height,
+                        width: box.size.width,
+                        height: box.size.height
+                    )
+                    context.cgContext.stroke(adjustedBox)
+                }
             }
         }
     }
