@@ -263,7 +263,7 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
         self.handleFrame(results: observations)  
     }
 
-    /// Handles every frame: counts target detections, blurs people & plates, always uploads the image
+    /// Counts target detections, blurs people & plates, always uploads the image
     /// and metadata.
     private func handleFrame(results: [VNRecognizedObjectObservation]) {
         // — 1. Grab & convert the buffer
@@ -273,7 +273,7 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             return
         }
 
-        // — 2. Count your enabled target-class detections
+        // —--- Step 2: Count enabled target-class detections
         let targetClasses: [(name: String, enabled: Bool)] = [
             ("container", UserDefaults.standard.bool(forKey: "detectContainers")),
             ("mobile toilet", UserDefaults.standard.bool(forKey: "detectMobileToilets")),
@@ -289,14 +289,13 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
                 }.count
             }
 
-        // Update your published counter exactly as before
         if totalDetected > 0 {
             DispatchQueue.main.async {
                 self.objectsDetected += totalDetected
             }
         }
 
-        // — 3. Collect all “person” & “license plate” boxes and blur them
+        // —-- Step 3: Collect all person & license plate boxes and blur them
         var sensitiveBoxes = [CGRect]()
         for obs in results {
             guard let label = obs.labels.first?.identifier.lowercased(),
@@ -316,12 +315,12 @@ class DetectionManager: NSObject, ObservableObject, VideoCaptureDelegate {
             image = blurred
         }
 
-        // — 4. Always upload image and metadata
+        // —-- Step 4: Upload image and metadata, also if no predictions are present
         let sendPredictions = totalDetected > 0 ? results : []
         self.deliverDetectionToAzure(image: image,
                                     predictions: sendPredictions)
 
-        // — 5. Reset for the next frame
+        // —-- Step 5: Reset for the next frame
         self.lastPixelBufferForSaving = nil
     }
     
