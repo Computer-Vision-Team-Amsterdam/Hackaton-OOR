@@ -1,4 +1,4 @@
-# Hackaton-OOR Object Detection iOS App
+# StraatScan: Object Detection iOS App
 
 ## Overview
 
@@ -17,8 +17,8 @@ Follow these steps to set up the project for development:
 
 ### **Clone the Repository:**
 ```bash
-git clone git@github.com:Computer-Vision-Team-Amsterdam/Hackaton-OOR.git
-cd Hackaton-OOR
+git clone git@github.com:Computer-Vision-Team-Amsterdam/StraatScan.git
+cd StraatScan
 ```
 
 ### **Secrets Configuration (`Secrets.xcconfig`)**
